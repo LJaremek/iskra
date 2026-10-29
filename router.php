@@ -5,4 +5,5 @@ $file = realpath(__DIR__ . '/public' . $path);
 $public = realpath(__DIR__ . '/public') . DIRECTORY_SEPARATOR;
 if ($file && str_starts_with($file, $public) && is_file($file)
     && !in_array(strtolower(pathinfo($file, PATHINFO_EXTENSION)), ['php', 'phtml', 'phar'], true)) return false;
+$_SERVER['SCRIPT_NAME'] = '/index.php';
 require __DIR__ . '/public/index.php';

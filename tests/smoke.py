@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integration tests against a real PHP server and isolated SQLite database."""
+"""Integration tests against a real PHP server and isolated JSON store."""
 import base64
 import concurrent.futures
 import http.cookiejar
@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import shlex
 import socket
-import sqlite3
+import fcntl
 import subprocess
 import tempfile
 import time
@@ -21,12 +21,34 @@ ROOT = Path(__file__).resolve().parents[1]
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args): return None
 
+class DataFile:
+    def __init__(self,path): self.path=Path(path)
+    def read(self):
+        with open(str(self.path)+'.lock','a+b') as lock:
+            fcntl.flock(lock,fcntl.LOCK_SH)
+            return json.loads(self.path.read_text().partition('\n')[2])
+    def rows(self,table):
+        rows=self.read()[table]
+        return list(rows.values()) if isinstance(rows,dict) else rows
+    def find(self,table,**matches):
+        return next(r for r in self.rows(table) if all(r[k]==v for k,v in matches.items()))
+    def patch(self,table,row_id,**changes):
+        with open(str(self.path)+'.lock','a+b') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            data=json.loads(self.path.read_text().partition('\n')[2])
+            data[table][str(row_id)].update(changes)
+            with tempfile.NamedTemporaryFile(mode='w',dir=self.path.parent,delete=False) as tmp:
+                tmp.write('<?php http_response_code(404); exit; __halt_compiler();\n')
+                json.dump(data,tmp,ensure_ascii=False)
+            os.replace(tmp.name,self.path)
+
 class Browser:
     def __init__(self, base):
         self.base = base.rstrip('/')
         parsed=urllib.parse.urlsplit(self.base)
         self.origin=parsed.scheme+'://'+parsed.netloc
         self.prefix=parsed.path.rstrip('/')
+        self.pretty=os.environ.get('QUIZ_PRETTY_URLS')=='1'
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.jar), NoRedirect())
@@ -51,8 +73,16 @@ class Browser:
             chunks.append(('--'+boundary+'--\r\n').encode())
             body = b''.join(chunks)
             headers['Content-Type'] = 'multipart/form-data; boundary='+boundary
-        full_path=self.prefix and (path==self.prefix or path.startswith(self.prefix+'/'))
-        request_url=self.origin+path if full_path else self.base+path
+        local=path[len(self.prefix):] if self.prefix and path.startswith(self.prefix+'/') else path
+        parsed_path=urllib.parse.urlsplit(local)
+        direct=parsed_path.path.startswith(('/assets/','/uploads/','/favicon.svg','/index.php'))
+        if direct or self.pretty or parsed_path.path=='/':
+            request_url=self.base+local
+        elif parsed_path.path.rstrip('/')=='/ng':
+            request_url=self.base+'/ng/'
+        else:
+            request_url=self.base+'/index.php?route='+urllib.parse.quote(parsed_path.path,safe='')
+            if parsed_path.query:request_url+='&'+parsed_path.query
         req = urllib.request.Request(request_url, body, headers)
         try: response = self.opener.open(req, timeout=10)
         except urllib.error.HTTPError as error: response = error
@@ -68,6 +98,12 @@ class Browser:
         token = re.search(r'name="csrf-token" content="([^"]+)"', content)
         if token: self.csrf = token.group(1)
         return content, response.headers
+
+    def route(self,location):
+        parsed=urllib.parse.urlsplit(location)
+        route=urllib.parse.parse_qs(parsed.query).get('route',[None])[0]
+        if route is not None:return route
+        return parsed.path[len(self.prefix):] if self.prefix else parsed.path
 
     def state(self, token, host=False):
         return json.loads(self.call('/api/game/'+token+('?host=1' if host else ''))[0])
@@ -89,9 +125,12 @@ def run_tests(base, dbfile):
     outsider.call('/admin/quiz/create', {'title':'forged'},303)
     admin.call('/admin/quiz/create', {'title':'CSRF'},403,csrf=False)
     assert 'no-store' in admin.call('/admin')[1].get('Cache-Control','')
+    error_html=outsider.call('/not-a-route',expected=404)[0]
+    assert 'data-back' not in error_html and '← Wróć</a>' in error_html
+
 
     _, headers = admin.call('/admin/quiz/create', {'title':'Wiedza <test>','description':'HTTP test'},303)
-    quiz_path = headers['Location']
+    quiz_path = admin.route(headers['Location'])
     quiz_id = int(quiz_path.rsplit('/',1)[1])
     new_question_html=admin.call(quiz_path+'/question/new')[0]
     assert re.search(r'id="duration"[^>]*value="10"',new_question_html)
@@ -106,14 +145,14 @@ def run_tests(base, dbfile):
     admin.call(quiz_path+'/question/save',multipart=(image_answer,'option_image_0','test.png',png,'image/png'),expected=303)
     admin.call(quiz_path+'/question/save',multipart=(q,'image','evil.php',b'<?php echo 1; ?>','image/png'),expected=422)
     admin.call(quiz_path+'/question/save',multipart=(q,'image','evil.svg',b'<svg xmlns="http://www.w3.org/2000/svg"></svg>','image/svg+xml'),expected=422)
-    connection = sqlite3.connect(dbfile)
-    ids = [r[0] for r in connection.execute('SELECT id FROM questions ORDER BY position')]
+    data = DataFile(dbfile)
+    ids = [r['id'] for r in sorted(data.rows('questions'),key=lambda q:q['position'])]
     assert len(ids) == 3
     admin.call(quiz_path+'/question/'+str(ids[1])+'/move',{'direction':-1},303)
-    assert connection.execute('SELECT id FROM questions ORDER BY position').fetchone()[0] == ids[1]
+    assert min(data.rows('questions'),key=lambda q:q['position'])['id'] == ids[1]
     admin.call(quiz_path+'/question/'+str(ids[1])+'/move',{'direction':1},303)
     _, headers = admin.call(quiz_path+'/start',{},303)
-    run_id = int(headers['Location'].rsplit('/',1)[1])
+    run_id = int(admin.route(headers['Location']).rsplit('/',1)[1])
     host_html,_ = admin.call(headers['Location'])
     token = re.search(r'data-token="([a-f0-9]+)"',host_html).group(1)
     state = admin.state(token,True)
@@ -135,8 +174,7 @@ def run_tests(base, dbfile):
         return browser.call('/api/game/'+token+'/answer',{'index':index,'choice':choice},expected)
 
     def set_start(start):
-        connection.execute('UPDATE runs SET started_at=? WHERE id=?',(start,run_id))
-        connection.commit()
+        data.patch('runs',run_id,started_at=start)
 
     action('next',-1)
     action('next',-1,409)
@@ -147,7 +185,7 @@ def run_tests(base, dbfile):
     assert countdown['question'] is None and countdown['correct'] is None
     assert countdown['answerStats'] is None and 'ranking' not in countdown
     answer(a,0,0,409)
-    assert connection.execute('SELECT COUNT(*) FROM answers').fetchone()[0]==0
+    assert len(data.rows('answers'))==0
     # Move the server timestamp instead of sleeping through every phase.
     set_start(time.time()-.1)
     state=a.state(token)
@@ -207,7 +245,7 @@ def run_tests(base, dbfile):
     set_start(time.time()-5-15-.1)
     # A stale host request commits the automatic transition instead of undoing it.
     action('next',1,409)
-    assert connection.execute('SELECT question_index FROM runs WHERE id=?',(run_id,)).fetchone()[0]==2
+    assert data.find('runs',id=run_id)['question_index']==2
     assert a.state(token)['state']=='countdown'
     set_start(time.time()-.1)
     image_answer_state=a.state(token)
@@ -225,12 +263,12 @@ def run_tests(base, dbfile):
     set_start(time.time()-5-15-.1)
     state=a.state(token)
     assert state['state']=='finished' and len(state['ranking'])==2
-    assert connection.execute('SELECT COUNT(*) FROM answers').fetchone()[0]==4
+    assert len(data.rows('answers'))==4
     admin.call('/admin/history')
     admin.call('/admin/run/'+str(run_id))
     # The host can skip the results delay, including the final wait before the podium.
     _,h=admin.call(quiz_path+'/start',{},303)
-    skip_id=int(h['Location'].rsplit('/',1)[1])
+    skip_id=int(admin.route(h['Location']).rsplit('/',1)[1])
     skip_html=admin.call(h['Location'])[0]
     skip_token=re.search(r'data-token="([a-f0-9]+)"',skip_html).group(1)
     skip_state=admin.state(skip_token,True)
@@ -241,11 +279,9 @@ def run_tests(base, dbfile):
         assert a.state(skip_token)['state']=='countdown'
         # Neither the countdown nor the active question can be skipped by this button.
         admin.call(skip_endpoint+'/host',{'action':'next','index':index},409)
-        connection.execute('UPDATE runs SET started_at=? WHERE id=?',(time.time()-.1,skip_id))
-        connection.commit()
+        data.patch('runs',skip_id,started_at=time.time()-.1)
         admin.call(skip_endpoint+'/host',{'action':'next','index':index},409)
-        connection.execute('UPDATE runs SET started_at=? WHERE id=?',(time.time()-5-.1,skip_id))
-        connection.commit()
+        data.patch('runs',skip_id,started_at=time.time()-5-.1)
         results=a.state(skip_token)
         assert results['state']=='results' and 14<results['deadline']-results['serverTime']<=15
         a.call(skip_endpoint+'/host',{'action':'next','index':index},401)
@@ -260,30 +296,29 @@ def run_tests(base, dbfile):
 
     # A client returning after several missed phases catches up to the final ranking.
     _,h=admin.call(quiz_path+'/start',{},303)
-    idle_id=int(h['Location'].rsplit('/',1)[1])
+    idle_id=int(admin.route(h['Location']).rsplit('/',1)[1])
     idle_html=admin.call(h['Location'])[0]
     idle_token=re.search(r'data-token="([a-f0-9]+)"',idle_html).group(1)
     idle_state=admin.state(idle_token,True)
     admin.call('/api/game/'+idle_token+'/host',{'action':'next','index':-1},422)
     a.call('/ng',{'code':idle_state['code'],'name':'Ala'},303)
     admin.call('/api/game/'+idle_token+'/host',{'action':'next','index':-1})
-    connection.execute('UPDATE runs SET started_at=? WHERE id=?',(time.time()-1000,idle_id))
-    connection.commit()
+    data.patch('runs',idle_id,started_at=time.time()-1000)
     caught_up=a.state(idle_token)
     assert caught_up['state']=='finished' and caught_up['index']==2
     assert caught_up['answerStats']==[0,0,0,0]
 
     # Editing/deleting a quiz does not mutate a run snapshot or historical images.
-    before=connection.execute('SELECT snapshot FROM runs WHERE id=?',(run_id,)).fetchone()[0]
+    before=data.find('runs',id=run_id)['snapshot']
     admin.call(quiz_path+'/save',{'title':'Nowa nazwa','description':''},303)
     admin.call(quiz_path+'/delete',{},303)
-    assert connection.execute('SELECT snapshot FROM runs WHERE id=?',(run_id,)).fetchone()[0]==before
-    assert connection.execute('SELECT quiz_id FROM runs WHERE id=?',(run_id,)).fetchone()[0] is None
+    assert data.find('runs',id=run_id)['snapshot']==before
+    assert data.find('runs',id=run_id)['quiz_id'] is None
     admin.call('/admin/run/'+str(run_id))
     assert a.state(token)['title']=='Wiedza <test>'
     # A fresh run has an independent ranking; abandoned codes expire without cron.
     _,h=admin.call('/admin/quiz/create',{'title':'Druga gra'},303)
-    second=h['Location']; admin.call(second+'/question/save',q,303)
+    second=admin.route(h['Location']); admin.call(second+'/question/save',q,303)
     _,h=admin.call(second+'/start',{},303)
     html=admin.call(h['Location'])[0]; token2=re.search(r'data-token="([a-f0-9]+)"',html).group(1)
     state2=admin.state(token2,True)
@@ -292,16 +327,17 @@ def run_tests(base, dbfile):
     b.call('/ng',{'code':state2['code'],'name':'Bartek'},303)
     admin.call('/api/game/'+token2+'/host',{'action':'next','index':-1})
     assert a.state(token2)['state']=='countdown'
-    connection.execute('UPDATE runs SET started_at=? WHERE token=?',(time.time()-.1,token2))
-    connection.commit()
+    data.patch('runs',data.find('runs',token=token2)['id'],started_at=time.time()-.1)
     a.call('/api/game/'+token2+'/answer',{'index':0,'choice':0})
     time.sleep(.3)
     b.call('/api/game/'+token2+'/answer',{'index':0,'choice':0})
-    scores=connection.execute('SELECT p.name,a.points FROM answers a JOIN players p ON p.id=a.player_id WHERE a.run_id=(SELECT id FROM runs WHERE token=?) ORDER BY a.points DESC',(token2,)).fetchall()
+    score_run=data.find('runs',token=token2)['id']
+    names={p['id']:p['name'] for p in data.rows('players')}
+    scores=sorted([(names[a['player_id']],a['points']) for a in data.rows('answers') if a['run_id']==score_run],key=lambda r:-r[1])
     assert scores[0][0]=='Ala' and scores[0][1]>scores[1][1]>=500
-    connection.execute('UPDATE runs SET created_at=? WHERE token=?',(int(time.time())-43201,token2));connection.commit()
+    data.patch('runs',data.find('runs',token=token2)['id'],created_at=int(time.time())-43201)
     assert admin.state(token2,True)['state']=='finished'
-    outsider.call('/storage/quiz.sqlite',expected=404)
+    outsider.call('/storage/quiz.json.php',expected=404)
     outsider.call('/app/bootstrap.php',expected=404)
     outsider.call('/.git/config',expected=404)
     outsider.call('/api/nope',expected=404)
@@ -311,7 +347,6 @@ def run_tests(base, dbfile):
     login.call('/admin/login',{'username':'host','password':'wrong'},401)
     login.call('/admin/login',{'username':'host','password':'test password 12345'},303)
     assert 'Twoje quizy' in login.call('/admin')[0]
-    connection.close()
     print('PASS: setup/login, auth/CSRF, quiz CRUD/order, 2/3/4 answers, image uploads,')
     print('      join/names/reconnect, live timing, hidden correctness, duplicate/late answers,')
     print('      concurrent writes, scoring/ranking, snapshots/history, expiry, data isolation,')
@@ -321,14 +356,15 @@ def run_tests(base, dbfile):
 def main():
     php=os.environ.get('PHP_BIN','php')
     php_args=shlex.split(os.environ.get('PHP_ARGS',''))
-    for prefix in ['', '/~test/integracja/public']:
+    for prefix,pretty in [('',True),('/~test/iskra/public',True),('',False),('/~test/iskra/public',False)]:
+        os.environ['QUIZ_PRETTY_URLS']='1' if pretty else '0'
         with tempfile.TemporaryDirectory(prefix='iskra-test-') as temporary:
-            dbfile=str(Path(temporary)/'test.sqlite')
+            dbfile=str(Path(temporary)/'quiz.json.php')
             with socket.socket() as sock:
                 sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             origin='http://127.0.0.1:'+str(port)
             base=origin+prefix
-            env=dict(os.environ,QUIZ_DB=dbfile,PHP_CLI_SERVER_WORKERS='4',QUIZ_TEST_PREFIX=prefix)
+            env=dict(os.environ,QUIZ_DATA=dbfile,PHP_CLI_SERVER_WORKERS='4',QUIZ_TEST_PREFIX=prefix)
             log=Path(temporary)/'php.log'
             with log.open('w') as stream:
                 process=subprocess.Popen([php,*php_args,'-d','session.save_path='+temporary,
@@ -337,12 +373,12 @@ def main():
                 try:
                     for _ in range(60):
                         try:
-                            urllib.request.urlopen(base+'/ng',timeout=1).close();break
+                            urllib.request.urlopen(base+'/index.php',timeout=1).close();break
                         except (urllib.error.URLError,TimeoutError):
                             if process.poll() is not None: raise RuntimeError(log.read_text())
                             time.sleep(.1)
                     else: raise RuntimeError('PHP server did not start')
-                    print('Mount:',prefix or '/')
+                    print('Mount:',prefix or '/','pretty' if pretty else 'without rewrite')
                     run_tests(base,dbfile)
                 except Exception:
                     print(log.read_text()[-3000:]);raise
@@ -352,11 +388,9 @@ def main():
                         os.killpg(process.pid,signal.SIGTERM)
                     else: process.terminate()
                     process.wait(timeout=10)
-                    # Remove only upload paths referenced by this disposable test database.
-                    with sqlite3.connect(dbfile) as cleanup:
-                        blobs=[str(row) for row in cleanup.execute('SELECT image,options FROM questions')]
-                        blobs += [row[0] for row in cleanup.execute('SELECT snapshot FROM runs')]
-                        for filename in set(re.findall(r'/uploads/([a-f0-9]{32}\.[a-z]+)', ' '.join(blobs).replace(chr(92)+'/','/'))):
+                    if Path(dbfile).exists():
+                        blobs=Path(dbfile).read_text()
+                        for filename in set(re.findall(r'/uploads/([a-f0-9]{32}\.[a-z]+)',blobs.replace(chr(92)+'/','/'))):
                             (ROOT/'public'/'uploads'/filename).unlink(missing_ok=True)
 
 if __name__=='__main__': main()

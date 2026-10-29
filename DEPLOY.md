@@ -1,80 +1,77 @@
-# Wdrożenie Iskry na serwer
+# Wdrożenie Iskry
 
-## Zawartość i wymagania
-Paczka zawiera aktualny kod aplikacji i testy. Baza SQLite utworzy się
-automatycznie przy pierwszym uruchomieniu. Konto admina należy założyć na serwerze.
-Nie ma domyślnego hasła ani publicznej rejestracji kolejnych kont.
+## Pierwsze uruchomienie na hostingu
 
-Wymagania: PHP 8.1+, PDO SQLite, fileinfo oraz standardowe session i filter.
-Produkcja: Apache z PHP lub nginx z PHP-FPM. Composer, Node, cron i WebSockety
-nie są potrzebne. Python 3 jest potrzebny tylko do opcjonalnych testów.
-
-## Instalacja
-1. Sklonuj repozytorium lub rozpakuj paczkę na serwerze:
+1. Sklonuj repozytorium:
        git clone https://github.com/LJaremek/iskra.git
-   Katalog repozytorium będzie nosił nazwę iskra/. W przykładach poniżej
-   free_kahoot/ oznacza katalog główny aplikacji; dostosuj go do nazwy swojego katalogu.
-2. Jeśli masz własny vhost, ustaw document root na free_kahoot/public/.
-   Na hostingu z podfolderami wejdź pod pełny adres tego katalogu, np.
-   https://domena.example/~uzytkownik/integracja/public/.
-   Prefiks URL jest rozpoznawany automatycznie; nie wpisuj go ręcznie w kodzie.
-   Przykłady konfiguracji Apache i nginx znajdują się w README.md.
-   Prześlij również ukryte pliki .htaccess, w tym blokady w app/, storage/ i tests/.
-   Nie przenoś samego index.php bez pozostałych katalogów.
-3. Zapewnij procesowi PHP prawo zapisu do storage/ i public/uploads/.
-   Użytkownik PHP to często www-data, ale sprawdź konfigurację serwera.
-   Przykład, wykonywany w katalogu free_kahoot/:
-       sudo chown -R www-data:www-data storage public/uploads
-       sudo chmod 750 storage
-       sudo chmod 755 public/uploads
-4. W konfiguracji PHP ustaw:
-       upload_max_filesize = 5M
-       post_max_size = 30M
-       max_file_uploads = 8
-       session.gc_maxlifetime = 43200
-       display_errors = Off
-       log_errors = On
-   Sesje PHP muszą mieć zapisywalny katalog. W nginx ustaw client_max_body_size 30m.
-5. Włącz HTTPS. Za reverse proxy ustaw przekazywanie HTTPS w zaufanej konfiguracji
-   serwera, tak aby PHP widziało HTTPS=on.
-6. Przed publicznym udostępnieniem wejdź na /admin i utwórz pierwsze konto admina.
-7. Utwórz quiz i rozpocznij grę. Gracze dołączają przez /ng, podając kod i nazwę.
+2. W katalogu repozytorium wykonaj:
+       sh scripts/permissions.sh
+3. Otwórz pełny adres katalogu public/, np.:
+       https://domena.example/~uzytkownik/iskra/public/
+4. Kliknij „Panel prowadzącego” i załóż pierwsze konto administratora.
+5. Utwórz quiz. Gracze dołączają pod adresem kończącym się na:
+       /iskra/public/ng/
+   Alternatywnie:
+       /iskra/public/index.php?route=/ng
 
-## Aktualny przebieg rozgrywki
-- Nowe pytania mają domyślnie 10 sekund; czas można edytować.
-- Przed każdym pytaniem jest 5 sekund odliczania.
-- Wyniki pytania trwają 15 sekund, potem gra przechodzi dalej automatycznie.
-- Prowadzący może pominąć oczekiwanie przyciskiem „Następne pytanie”,
-  a po ostatnim pytaniu przyciskiem „Pokaż podium teraz”.
-- Wyniki pokazują rozkład głosów, poprawną opcję i punkty za rundę oraz sumę.
-- Na końcu jest podium top 3 i tabela wszystkich graczy.
+Potrzebne jest PHP 8.1+ ze standardowymi funkcjami plików, JSON, sesji i filter.
+PDO, SQLite, MySQL, Composer, Node, GD i fileinfo nie są wymagane.
 
-## Test przed udostępnieniem
-Jeżeli na serwerze jest Python 3, można wykonać:
-    python3 tests/smoke.py
-Test korzysta z osobnej, tymczasowej bazy i nie zmienia bazy aplikacji.
-Następnie sprawdź na docelowym serwerze logowanie, upload zdjęcia i dołączenie
-gracza z drugiej przeglądarki. Testy obciążenia zależą od docelowego hostingu.
+Domyślny routing przez index.php?route=... działa bez mod_rewrite.
+public/ng/index.php jest fizycznym endpointem dołączania. Zachowaj ten podkatalog.
 
-## Dane i aktualizacje
-Baza: storage/quiz.sqlite. Zdjęcia: public/uploads/.
-Te dane zachowuj przy kolejnych aktualizacjach aplikacji.
-Kopie aktywnej bazy wykonuj mechanizmem backupu SQLite; szczegóły w README.md.
-Nie kopiuj ustawień sieci WSL — na serwerze Linux nie są potrzebne.
+## Uprawnienia
 
+Skrypt nadaje 705 kodowi i katalogom. Prywatne dane i blokady mają 600,
+a publiczne zdjęcia 644. Git nie przechowuje dokładnego trybu 705 — po pull
+trzeba uruchomić skrypt na serwerze.
 
-## Wgranie poprawki do już działającej instalacji
-Nadpisz kod i pliki .htaccess, zachowując istniejącą bazę storage/quiz.sqlite,
-pliki WAL/SHM oraz dodane zdjęcia w public/uploads/. Nie kasuj bazy przy aktualizacji.
-Odśwież ekrany prowadzącego i graczy po zmianie plików JavaScript.
+storage/ i public/uploads/ muszą należeć do użytkownika procesu PHP.
+Przy trybie 705 tylko właściciel może w nich zapisywać.
 
-Jeżeli pozostaje błąd 500, odczytaj jego pełny tekst. Brak pdo_sqlite oraz
-brak uprawnień do zapisu bazy są teraz opisane wprost. Inne błędy wymagają
-sprawdzenia logu PHP z tej samej godziny. Nie publikuj phpinfo() ani zawartości logów.
+## Konfiguracja PHP i HTTP
 
+Ustaw upload_max_filesize=5M, post_max_size=30M, max_file_uploads=8
+i session.gc_maxlifetime=43200. Włącz logowanie błędów, wyłącz ich publiczne
+wyświetlanie. Sesje muszą mieć zapisywalny katalog.
 
-## Aktualizacja z repozytorium
-Po wypchnięciu zmian przez dewelopera wykonaj na serwerze w katalogu repozytorium:
+Jeżeli masz własny vhost, wskaż document root na public/.
+Na hostingu z podfolderami zachowaj strukturę repozytorium i ukryte pliki .htaccess.
+Włącz HTTPS. Dla nginx ustaw limit body 30m. Za reverse proxy przekaż HTTPS=on
+w zaufanej konfiguracji.
+
+## Dane i migracja
+
+Dane tworzą się w storage/quiz.json.php. To JSON z osłoną PHP, która blokuje
+bezpośredni odczyt przez HTTP również bez .htaccess. Nie usuwaj osłony.
+Plik .lock jest potrzebny do serializacji zapisów. Nie usuwaj go podczas gry.
+
+Jeżeli istnieje starsza baza SQLite, przed wejściem do aplikacji wykonaj:
+    python3 scripts/migrate_sqlite.py
+Nie jest potrzebne rozszerzenie PHP SQLite. Polecenie nie usuwa starej bazy
+i nie nadpisuje istniejącego JSON. Kopię starej bazy przechowuj poza WWW.
+
+## Kolejne aktualizacje
+
+W katalogu repozytorium:
     git pull --ff-only
-Baza i przesłane zdjęcia są ignorowane przez Git i nie są nadpisywane przez pull.
-Nie zapisuj własnych zmian kodu na serwerze, jeśli mają być zarządzane w repozytorium.
+    sh scripts/permissions.sh
+
+Nie kasuj storage/ ani public/uploads/. Odśwież przeglądarki po aktualizacji JS.
+Nie zapisuj własnych zmian kodu na serwerze, jeśli kod jest zarządzany przez Git.
+
+## Testy
+
+Lokalnie lub na serwerze z Pythonem 3:
+    python3 tests/smoke.py
+    python3 tests/store_integrity.py
+Nie dotykają danych produkcyjnych. Wykonaj też test dołączania na docelowym
+hostingu. Przed dużym wydarzeniem sprawdź jego wydajność.
+
+## Gdy coś nie działa
+
+- Brak /ng/: sprawdź, czy na serwerze istnieje public/ng/index.php i katalog ma
+  prawa 705. Użyj index.php?route=/ng, jeśli hosting nie obsługuje DirectoryIndex.
+- 500: przeczytaj pełny komunikat. Brak zapisu oznacza problem z właścicielem
+  storage/ lub prawami. Pozostałe wyjątki są w logu PHP.
+- „Wróć” jest linkiem wewnętrznym. Powinien pozostać pod prefiksem aplikacji.

@@ -29,7 +29,7 @@ try {
         }
         fail('Niedozwolona metoda.',405);
     }
-    $hasAdmin=(bool)sql('SELECT 1 FROM admins LIMIT 1')->fetchColumn();
+    $hasAdmin=(bool)store()->find('admins',1);
     if ($path==='/admin/setup') {
         if ($hasAdmin) redirect('/admin/login');
         if ($post) {
@@ -37,8 +37,8 @@ try {
             $username=input('username',40); $password=input('password',200);
             if (preg_match_all('/./us',$password)<12 || strlen($password)>72) fail('Hasło musi mieć przynajmniej 12 znaków i zajmować najwyżej 72 bajty.');
             transaction(function () use ($username,$password) {
-                if (sql('SELECT 1 FROM admins')->fetchColumn()) fail('Konto administratora jest już utworzone.',409);
-                sql('INSERT INTO admins VALUES (1,?,?)',[$username,password_hash($password,PASSWORD_DEFAULT)]);
+                if (store()->find('admins',1)) fail('Konto administratora jest już utworzone.',409);
+                store()->insert('admins',['username'=>$username,'password'=>password_hash($password,PASSWORD_DEFAULT)],1);
             });
             session_regenerate_id(true); $_SESSION['admin']=true;
             flash('Konto gotowe. Czas na pierwszy quiz!'); redirect('/admin');
@@ -50,7 +50,7 @@ try {
         if (!empty($_SESSION['admin'])) redirect('/admin');
         if ($post) {
             limited('login',10,900);
-            $record=sql('SELECT * FROM admins WHERE id=1')->fetch();
+            $record=store()->find('admins',1);
             $password=input('password',200);
             if (strlen($password)>72 || !hash_equals($record['username'],input('username',40)) || !password_verify($password,$record['password']))
                 fail('Niepoprawny login lub hasło.',401);
@@ -81,24 +81,30 @@ try {
         admin();
         if ($path==='/admin' && !$post) {
             expire_runs();
-            $quizzes=sql('SELECT q.*,(SELECT COUNT(*) FROM questions WHERE quiz_id=q.id) AS question_count,
-                (SELECT COUNT(*) FROM runs WHERE quiz_id=q.id) AS run_count FROM quizzes q ORDER BY q.id DESC')->fetchAll();
-            $active=sql("SELECT r.*,(SELECT COUNT(*) FROM players WHERE run_id=r.id) AS player_count FROM runs r WHERE state!='finished' ORDER BY r.id DESC")->fetchAll();
+            $quizzes=array_reverse(store()->all('quizzes'));
+            foreach ($quizzes as &$q) {
+                $q['question_count']=count(questions($q['id']));
+                $q['run_count']=count(store()->filter('runs',fn($r)=>$r['quiz_id']===$q['id']));
+            }
+            unset($q);
+            $active=array_reverse(store()->filter('runs',fn($r)=>$r['state']!=='finished'));
+            foreach ($active as &$r) $r['player_count']=count(run_players($r['id']));
+            unset($r);
             page('Twoje quizy','dashboard',['quizzes'=>$quizzes,'active'=>$active]); exit;
         }
         if ($path==='/admin/quiz/create' && $post) {
-            sql('INSERT INTO quizzes (title,description,created_at) VALUES (?,?,?)',[input('title',100),input('description',300,false),time()]);
-            redirect('/admin/quiz/' . db()->lastInsertId());
+            $id=store()->insert('quizzes',['title'=>input('title',100),'description'=>input('description',300,false),'created_at'=>time()]);
+            redirect('/admin/quiz/'.$id);
         }
         if (preg_match('~^/admin/quiz/(\d+)(?:/(save|delete|start))?$~',$path,$m)) {
             $id=(int)$m[1]; $quiz=quiz($id); $action=$m[2] ?? '';
             if (!$post && $action==='') { page($quiz['title'],'editor',['quiz'=>$quiz,'questions'=>questions($id)]); exit; }
             if ($post && $action==='save') {
-                sql('UPDATE quizzes SET title=?,description=? WHERE id=?',[input('title',100),input('description',300,false),$id]);
+                store()->update('quizzes',$id,['title'=>input('title',100),'description'=>input('description',300,false)]);
                 flash('Zapisano quiz.'); redirect('/admin/quiz/'.$id);
             }
             if ($post && $action==='delete') {
-                sql('DELETE FROM quizzes WHERE id=?',[$id]); flash('Usunięto quiz. Historia rozgrywek została zachowana.'); redirect('/admin');
+                delete_quiz($id); flash('Usunięto quiz. Historia rozgrywek została zachowana.'); redirect('/admin');
             }
             if ($post && $action==='start') redirect('/admin/host/'.create_run($id));
         }
@@ -106,16 +112,17 @@ try {
             $quizId=(int)$m[1]; $quiz=quiz($quizId); $part=$m[2]; $action=$m[3] ?? '';
             $question=null;
             if (preg_match('/^\d+$/D',$part)) {
-                $question=sql('SELECT * FROM questions WHERE id=? AND quiz_id=?',[(int)$part,$quizId])->fetch();
+                $question=store()->find('questions',(int)$part);
+                if ($question && $question['quiz_id'] !== $quizId) $question=null;
                 if (!$question) fail('Nie znaleziono pytania.',404);
-                $question['options']=json_decode($question['options'],true,512,JSON_THROW_ON_ERROR);
             }
             if (!$post && ($part==='new' || $question)) { page($question?'Edytuj pytanie':'Nowe pytanie','question',['quiz'=>$quiz,'question'=>$question]); exit; }
             if ($post && $part==='save') {
                 $qid=integer('id',0,PHP_INT_MAX);
-                $old=$qid ? sql('SELECT * FROM questions WHERE id=? AND quiz_id=?',[$qid,$quizId])->fetch() : null;
+                $old=$qid ? store()->find('questions',$qid) : null;
+                if ($old && $old['quiz_id'] !== $quizId) $old=null;
                 if ($qid && !$old) fail('Nie znaleziono pytania.',404);
-                $oldOptions=$old ? json_decode($old['options'],true,512,JSON_THROW_ON_ERROR) : [];
+                $oldOptions=$old['options'] ?? [];
                 $count=integer('count',2,4); $correct=integer('correct',0,$count-1); $duration=integer('duration',5,180);
                 $text=input('text',500,false);
                 $image=upload('image',isset($_POST['remove_image']) ? null : ($old['image'] ?? null));
@@ -127,21 +134,25 @@ try {
                     if ($optionText==='' && !$optionImage) fail('Każda odpowiedź musi zawierać tekst lub zdjęcie.');
                     $options[]=['text'=>$optionText,'image'=>$optionImage];
                 }
-                $encoded=json_encode($options,JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
-                if ($old) sql('UPDATE questions SET text=?,image=?,duration=?,options=?,correct=? WHERE id=? AND quiz_id=?',[$text,$image,$duration,$encoded,$correct,$qid,$quizId]);
-                else sql('INSERT INTO questions (quiz_id,position,text,image,duration,options,correct) VALUES (?,(SELECT COALESCE(MAX(position),0)+1 FROM questions WHERE quiz_id=?),?,?,?,?,?)',
-                    [$quizId,$quizId,$text,$image,$duration,$encoded,$correct]);
+                $values=['text'=>$text,'image'=>$image,'duration'=>$duration,'options'=>$options,'correct'=>$correct];
+                transaction(function () use ($old,$qid,$quizId,$values) {
+                    if ($old) store()->update('questions',$qid,$values);
+                    else {
+                        $positions=array_column(questions($quizId),'position');
+                        store()->insert('questions',$values+['quiz_id'=>$quizId,'position'=>($positions ? max($positions) : 0)+1]);
+                    }
+                });
                 flash('Pytanie zapisane.'); redirect('/admin/quiz/'.$quizId);
             }
             if ($post && $question && $action==='delete') {
-                sql('DELETE FROM questions WHERE id=? AND quiz_id=?',[$question['id'],$quizId]); flash('Usunięto pytanie.'); redirect('/admin/quiz/'.$quizId);
+                store()->delete('questions',fn($q)=>$q['id']===$question['id'] && $q['quiz_id']===$quizId); flash('Usunięto pytanie.'); redirect('/admin/quiz/'.$quizId);
             }
             if ($post && $question && $action==='move') {
                 $direction=integer('direction',-1,1);
                 transaction(function () use ($quizId,$question,$direction) {
                     $all=questions($quizId); $ids=array_column($all,'id'); $at=array_search($question['id'],$ids); $to=$at+$direction;
                     if (isset($all[$to])) { [$all[$at],$all[$to]]=[$all[$to],$all[$at]]; }
-                    foreach ($all as $i=>$q) sql('UPDATE questions SET position=? WHERE id=?',[$i+1,$q['id']]);
+                    foreach ($all as $i=>$q) store()->update('questions',$q['id'],['position'=>$i+1]);
                 });
                 redirect('/admin/quiz/'.$quizId);
             }
@@ -152,8 +163,9 @@ try {
         if ($path==='/admin/history' && !$post) {
             expire_runs();
             $quizId=isset($_GET['quiz']) && is_string($_GET['quiz']) && preg_match('/^\d+$/D',$_GET['quiz']) ? (int)$_GET['quiz'] : null;
-            $runs=sql('SELECT r.*,(SELECT COUNT(*) FROM players WHERE run_id=r.id) AS player_count
-                FROM runs r'.($quizId!==null?' WHERE r.quiz_id=?':'').' ORDER BY r.id DESC LIMIT 200',$quizId!==null?[$quizId]:[])->fetchAll();
+            $runs=array_slice(array_reverse(store()->filter('runs',fn($r)=>$quizId===null || $r['quiz_id']===$quizId)),0,200);
+            foreach ($runs as &$r) $r['player_count']=count(run_players($r['id']));
+            unset($r);
             page('Historia rozgrywek','history',['runs'=>$runs]); exit;
         }
         if (preg_match('~^/admin/run/(\d+)$~',$path,$m) && !$post) {

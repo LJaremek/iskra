@@ -1,7 +1,13 @@
 'use strict';
 const csrf = document.querySelector('meta[name="csrf-token"]').content;
 const appBase = document.querySelector('meta[name="app-base"]')?.content || '';
-const appUrl = path => appBase + path;
+const prettyUrls = document.querySelector('meta[name="route-mode"]')?.content === 'pretty';
+const appUrl = path => {
+    const [route, query = ''] = path.split('?');
+    if (route === '/ng' && !query) return appBase + '/ng/';
+    if (prettyUrls) return appBase + path;
+    return appBase + '/index.php?route=' + encodeURIComponent(route) + (query ? '&' + query : '');
+};
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 document.querySelectorAll('[data-toggle]').forEach(button => button.addEventListener('click', () => {
     const target = document.getElementById(button.dataset.toggle);
@@ -11,9 +17,6 @@ document.querySelectorAll('[data-toggle]').forEach(button => button.addEventList
 document.querySelectorAll('[data-confirm]').forEach(form => form.addEventListener('submit', event => {
     if (!confirm(form.dataset.confirm)) event.preventDefault();
 }));
-document.querySelector('[data-back]')?.addEventListener('click', () => {
-    if (history.length > 1) history.back(); else location.href = appUrl('/ng');
-});
 const codeInput = document.querySelector('#code');
 codeInput?.addEventListener('input', () => { codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, 3); });
 document.querySelectorAll('[data-image-input]').forEach(input => input.addEventListener('change', () => {
@@ -44,7 +47,7 @@ updateOptions();
 const game = document.querySelector('#game');
 if (game) {
     const host = game.dataset.host === '1';
-    const endpoint = appUrl('/api/game/') + game.dataset.token;
+    const endpoint = suffix => appUrl('/api/game/' + game.dataset.token + suffix);
     const connection = document.querySelector('#connection');
     let state = null, signature = '', pending = false, localChoice = null;
     let baseServer = 0, baseClock = performance.now(), polling = false, stopped = false;
@@ -166,7 +169,7 @@ if (game) {
             podium(data) +
             (me ? '<p class="my-result">Twoje miejsce: <strong>' + me.rank + '</strong> · Punkty: <strong>' + me.score + '</strong> · Poprawne: ' + me.correct + ' / ' + data.total + '</p>' : '') +
             '<div class="panel round-ranking"><h2>Ranking końcowy — wszyscy gracze</h2>' + ranking(data) + '</div><div class="finish-link">' +
-            (host ? '<a class="button secondary" href="' + esc(appUrl('/admin/run/')) + game.dataset.id + '">Szczegóły rozgrywki</a><a class="button primary" href="' + esc(appUrl('/admin')) + '">Twoje quizy →</a>' :
+            (host ? '<a class="button secondary" href="' + esc(appUrl('/admin/run/' + game.dataset.id)) + '">Szczegóły rozgrywki</a><a class="button primary" href="' + esc(appUrl('/admin')) + '">Twoje quizy →</a>' :
                 '<a class="button primary" href="' + esc(appUrl('/ng')) + '">Dołącz do kolejnej gry →</a>') + '</div>';
     }
 
@@ -206,7 +209,7 @@ if (game) {
         const start = performance.now();
         let loaded = false;
         try {
-            const data = await request(endpoint + (host ? '?host=1' : ''));
+            const data = await request(endpoint(host ? '?host=1' : ''));
             baseServer = data.serverTime + (performance.now() - start) / 2000;
             baseClock = performance.now();
             if (!state || data.index !== state.index) localChoice = null;
@@ -246,7 +249,7 @@ if (game) {
         if (isAnswer) localChoice = Number(button.dataset.choice);
         render(state, true);
         try {
-            await request(endpoint + (isAnswer ? '/answer' : '/host'), isAnswer ?
+            await request(endpoint(isAnswer ? '/answer' : '/host'), isAnswer ?
                 {index, choice: button.dataset.choice} : {index, action: button.dataset.action});
             connection.textContent = '';
         } catch (error) {
