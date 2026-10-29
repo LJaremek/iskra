@@ -22,6 +22,7 @@ function page(string $title,string $view,array $data=[]): void {
 <title><?=e($title)?> · Iskra</title>
 <link rel="icon" href="<?=e(base_path())?>/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="<?=e(base_path())?>/assets/style.css?v=<?=filemtime(dirname(__DIR__).'/public/assets/style.css')?>">
+<?php if ($view==='join' || $isLive): ?><script src="<?=e(base_path())?>/assets/vendor/qrcode.js?v=2.0.4" defer></script><?php endif; ?>
 <script src="<?=e(base_path())?>/assets/app.js?v=<?=filemtime(dirname(__DIR__).'/public/assets/app.js')?>" defer></script>
 </head>
 <body class="<?=e($view)?>">
@@ -32,7 +33,10 @@ function page(string $title,string $view,array $data=[]): void {
 </nav></header>
 <main class="<?=$view==='join'?'join-main':($isLive?'live-main':'container')?>">
 <?php if ($notice): ?><div class="notice" role="status"><?=e($notice)?></div><?php endif; ?>
-<?php if ($view==='join'): ?>
+<?php if ($view==='join'):
+$joinCode=$_GET['code'] ?? '';
+if (!is_string($joinCode) || !preg_match('/^[1-9][0-9]{2}$/D',$joinCode)) $joinCode='';
+?>
 <div class="join-layout"><section class="join-copy"><div class="eyebrow"><span class="live-dot"></span> MAŁY KOD. WIELKA GRA.</div>
 <h1>Odrobina wiedzy.<br>Mnóstwo <span>emocji.</span></h1>
 <p>Jeden quiz, wspólna zabawa. Złap swój telefon,<br class="desktop-only"> wpisz kod i pokaż, co wiesz.</p>
@@ -43,10 +47,10 @@ function page(string $title,string $view,array $data=[]): void {
 <h2>Wskakuj do gry</h2><p>Kod dostaniesz od prowadzącego.</p>
 <form method="post" action="<?=e(url('/ng'))?>" class="stack"><?php hidden_csrf(); ?>
 <label for="code">Kod gry <span>3 cyfry</span></label>
-<input class="code-input" id="code" name="code" inputmode="numeric" pattern="[1-9][0-9]{2}" maxlength="3" placeholder="000" required autocomplete="off">
-<label for="name">Jak się nazywasz?</label><input id="name" name="name" maxlength="24" placeholder="Twoja nazwa w rankingu" required autocomplete="nickname">
+<input class="code-input" id="code" name="code" inputmode="numeric" pattern="[1-9][0-9]{2}" maxlength="3" placeholder="000" value="<?=e($joinCode)?>" required autocomplete="off">
+<label for="name">Jak się nazywasz?</label><input id="name" name="name" maxlength="24" placeholder="Twoja nazwa w rankingu" required autocomplete="nickname" <?=$joinCode!==''?'autofocus':''?>>
 <button class="button primary join-button">Dołącz do gry <span aria-hidden="true">→</span></button>
-</form><div class="card-bottom"><span class="live-dot"></span> Gotowi? Niech wygra najlepszy.</div></section></div>
+</form><details class="share-qr"><summary>Pokaż QR strony dołączania</summary><div class="qr-code" data-qr-path="<?=e(url('/ng'))?>" role="img" aria-label="Kod QR strony dołączania"><p class="muted small">Ładowanie kodu QR…</p></div><p class="muted small">Zeskanuj aparatem telefonu, aby otworzyć tę stronę.</p></details><div class="card-bottom"><span class="live-dot"></span> Gotowi? Niech wygra najlepszy.</div></section></div>
 <div class="join-footer"><span>Trochę rywalizacji dobrze robi.</span><span>100% w przeglądarce <span aria-hidden="true">✳</span></span></div>
 <?php elseif ($view==='auth'): ?>
 <div class="auth-card panel"><a class="back" href="<?=e(url('/ng'))?>">← Dołącz do gry</a><span class="eyebrow">DLA PROWADZĄCEGO</span>

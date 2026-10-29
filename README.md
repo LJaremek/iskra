@@ -19,7 +19,7 @@ Wbudowany serwer PHP służy do testów lokalnych. Na serwerze docelowym użyj u
 1. Wejdź na /public/ w adresie hostingu lub na http://localhost:8080/ w teście lokalnym.
 2. Kliknij „Panel prowadzącego” i załóż pierwsze konto administratora (hasło minimum 12 znaków, maksimum 72 bajty). Zrób to przed udostępnieniem strony innym.
 3. Utwórz quiz, dodaj pytania z 2–4 odpowiedziami i zaznacz jedną lub kilka poprawnych.
-4. Uruchom rozgrywkę. Gracze podają kod i nazwę, bez zakładania kont.
+4. Uruchom rozgrywkę. Gracze podają kod i nazwę, bez zakładania kont. Mogą też zeskanować QR w poczekalni prowadzącego — kod gry będzie już wpisany.
 5. Prowadzący uruchamia grę; kolejne rundy przechodzą automatycznie.
 
 Konto administratora jest jedno. Po jego utworzeniu rejestracja jest zamknięta.
@@ -52,6 +52,21 @@ Jeżeli na własnym serwerze masz poprawnie skonfigurowane reguły rewrite, moż
 - Maksymalnie 200 graczy to limit aplikacji, nie gwarancja wydajności hostingu.
 - Kody aktywnych gier są unikalne, od 100 do 999. Rozgrywki wygasają po 12 godzinach.
 - Zdjęcia pytań i odpowiedzi: JPG, PNG, WebP i GIF, do 5 MB i 6000 × 6000 px.
+
+## Kody QR
+
+Poczekalnia prowadzącego pokazuje QR i link do konkretnej rozgrywki.
+Adres ma postać .../public/ng/?code=123. Po zeskanowaniu gracz wpisuje nazwę
+i klika „Dołącz do gry”. Gracze nadal dołączają tylko w poczekalni.
+
+Na stronie dołączania opcja „Pokaż QR strony dołączania” udostępnia ogólny
+adres bez kodu gry. QR uwzględniają domenę i podfolder aktualnie otwartej strony.
+Przy testach telefonem otwórz panel pod adresem sieciowym komputera —
+QR z localhost wskazywałby telefon.
+
+Kody powstają w przeglądarce jako SVG, bez zewnętrznego API ani rozszerzeń PHP.
+Generator qrcode-generator 2.0.4 (MIT) jest dołączony lokalnie w
+public/assets/vendor/ wraz z licencją i wskazaniem źródła.
 
 ## Dane i prawa dostępu
 

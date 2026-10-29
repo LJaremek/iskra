@@ -80,7 +80,7 @@ class Browser:
         if direct or self.pretty or parsed_path.path=='/':
             request_url=self.base+local
         elif parsed_path.path.rstrip('/')=='/ng':
-            request_url=self.base+'/ng/'
+            request_url=self.base+'/ng/'+('?' + parsed_path.query if parsed_path.query else '')
         else:
             request_url=self.base+'/index.php?route='+urllib.parse.quote(parsed_path.path,safe='')
             if parsed_path.query:request_url+='&'+parsed_path.query
@@ -113,9 +113,17 @@ def run_tests(base, dbfile):
     admin, a, b, outsider = [Browser(base) for _ in range(4)]
     _,setup_headers=admin.call('/admin/setup')
     assert any('path='+admin.prefix+'/' in value for value in setup_headers.get_all('Set-Cookie',[]))
-    for asset in ['/assets/style.css','/assets/app.js','/favicon.svg']:
+    for asset in ['/assets/style.css','/assets/app.js','/assets/vendor/qrcode.js','/favicon.svg']:
         assert admin.call(asset)[1].get('Content-Type')
-    assert 'Wskakuj do gry' in outsider.call('/')[0]
+    join_html=outsider.call('/')[0]
+    assert 'Wskakuj do gry' in join_html and 'Pokaż QR strony dołączania' in join_html
+    assert 'data-qr-path="'+admin.prefix+'/ng/"' in join_html
+    assert join_html.index('/assets/vendor/qrcode.js')<join_html.index('/assets/app.js')
+    assert re.search(r'id="code"[^>]*value=""',join_html)
+    for query in ['code=12','code=000','code=1234','code%5B%5D=123','code=%22%3E%3Csvg%20onload=alert(1)%3E']:
+        invalid_html=outsider.call('/ng/?'+query)[0]
+        assert re.search(r'id="code"[^>]*value=""',invalid_html)
+        assert '<svg onload' not in invalid_html
     assert 'Wskakuj do gry' in outsider.call('/index.php')[0]
     admin.call('/admin/setup', {'username':'host','password':'ą'*6}, 422)
     admin.call('/admin/setup', {'username':'host','password':'a'*73}, 422)
@@ -197,6 +205,10 @@ def run_tests(base, dbfile):
     # Restore the quiz for later independent runs.
     admin.call(quiz_path+'/question/save',multi,303)
     code = state['code']
+    qr_join=a.call('/ng/?code='+code)[0]
+    assert re.search(r'id="code"[^>]*value="'+code+'"',qr_join)
+    assert re.search(r'id="name"[^>]*autofocus',qr_join)
+    assert len(data.rows('players'))==0  # Scanning opens the form; joining still needs a name.
     _,h=a.call('/ng',{'code':code,'name':'Ala <script>'},303)
     play_path=h['Location']
     b.call('/ng',{'code':code,'name':'ALA <script>'},422)
@@ -396,6 +408,7 @@ def run_tests(base, dbfile):
     print('      10s default, hidden 5s countdown, 15s auto-advance + admin skip, per-round points, vote stats,')
     print('      stale host requests and automatic catch-up after missed phases.')
     print('      multiple correct options, checkbox validation, legacy quiz/run compatibility, immutable snapshots.')
+    print('      QR vendor/assets, general QR path, physical join URL + code prefill, malformed query rejection.')
 
 def main():
     php=os.environ.get('PHP_BIN','php')

@@ -9,6 +9,27 @@ const appUrl = path => {
     return appBase + '/index.php?route=' + encodeURIComponent(route) + (query ? '&' + query : '');
 };
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// QR powstaje lokalnie w SVG. Adres zawiera także prefiks hostingu.
+const joinUrl = code => location.origin + appBase + '/ng/' + (code ? '?code=' + encodeURIComponent(code) : '');
+const qrCache = new Map();
+function drawQrCodes(root = document) {
+    root.querySelectorAll('[data-qr-path]').forEach(element => {
+        try {
+            const address = new URL(element.dataset.qrPath, location.origin).href;
+            if (!qrCache.has(address)) {
+                const qr = qrcode(0, 'M');
+                qr.addData(address);
+                qr.make();
+                qrCache.set(address, qr.createSvgTag({cellSize: 4, margin: 16, scalable: true}));
+            }
+            element.innerHTML = qrCache.get(address);
+        } catch {
+            element.textContent = 'Nie udało się wyświetlić QR. Skorzystaj z adresu strony i kodu gry.';
+        }
+    });
+}
+drawQrCodes();
+
 document.querySelectorAll('[data-toggle]').forEach(button => button.addEventListener('click', () => {
     const target = document.getElementById(button.dataset.toggle);
     target.hidden = !target.hidden;
@@ -101,9 +122,13 @@ if (game) {
     }
 
     function lobby(data) {
+        const address = joinUrl(data.code);
         return '<div class="lobby"><div class="panel lobby-code"><span class="eyebrow">DOŁĄCZ NA ' + esc(location.host + appUrl('/ng')) + '</span><h2>Kod do dobrej zabawy</h2><span class="big-code">' +
             esc(data.code) + '</span><p>Wpisz kod gry i swoją nazwę.</p>' +
-            (host ? '<button class="text-button" data-copy>Skopiuj adres dołączania ↗</button><br><button class="button primary" data-action="next" ' + (!data.players.length ? 'disabled' : '') + '>Zaczynamy →</button>' :
+            (host ? '<div class="qr-code lobby-qr" data-qr-path="' + esc(address) + '" role="img" aria-label="Kod QR do tej rozgrywki"></div>' +
+                '<p class="qr-caption">Zeskanuj aparatem telefonu.<br>Kod gry będzie już wpisany.</p>' +
+                '<a class="text-link" href="' + esc(address) + '">Link do tej gry ↗</a><br>' +
+                '<button class="text-button" data-copy="' + esc(address) + '">Skopiuj link do tej gry ↗</button><br><button class="button primary" data-action="next" ' + (!data.players.length ? 'disabled' : '') + '>Zaczynamy →</button>' :
                 '<p class="waiting-note"><span class="live-dot"></span>Jesteś w grze. Czekamy na prowadzącego.</p>') +
             '</div><div class="panel lobby-players"><h2>Ekipa w komplecie?<span class="count">' + data.players.length + ' / 200</span></h2>' +
             (data.players.length ? '<div class="player-cloud">' + data.players.map(p => '<span class="player-chip ' + (data.me && Number(p.id) === data.me.id ? 'mine' : '') + '">' + esc(p.name) + '</span>').join('') + '</div>' :
@@ -192,6 +217,7 @@ if (game) {
         else if (data.state === 'finished') content = finished(data);
         else content = question(data);
         game.innerHTML = header(data) + content;
+        drawQrCodes(game);
         game.setAttribute('aria-busy', 'false');
         updateTimer();
     }
@@ -244,8 +270,8 @@ if (game) {
     game.addEventListener('click', async event => {
         const copy = event.target.closest('[data-copy]');
         if (copy) {
-            try { await navigator.clipboard.writeText(location.origin + appUrl('/ng')); copy.textContent = 'Skopiowano ✓'; }
-            catch { connection.textContent = 'Adres dołączania: ' + location.origin + appUrl('/ng'); }
+            try { await navigator.clipboard.writeText(copy.dataset.copy); copy.textContent = 'Skopiowano ✓'; }
+            catch { connection.textContent = 'Adres dołączania: ' + copy.dataset.copy; }
             return;
         }
         const button = event.target.closest('[data-action], [data-choice]');

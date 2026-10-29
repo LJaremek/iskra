@@ -72,3 +72,12 @@
 .podium-place-3 .podium-step{height:53px}
 .round-ranking th,.round-ranking td{padding:13px 9px}
 }
+
+/* Czarno-biały QR z jasnym marginesem do skanowania aparatem. */
+.qr-code{width:240px;max-width:100%;margin:18px auto;background:#fff;border-radius:10px;line-height:0}
+.qr-code svg{display:block;width:100%;height:auto;shape-rendering:crispEdges}
+.qr-code p{line-height:1.5}
+.share-qr{border-top:1px solid var(--line);margin-top:22px;padding-top:18px;text-align:center}
+.share-qr summary{font-size:12px;font-weight:600;cursor:pointer}
+.share-qr>p,.lobby-code .qr-caption{font-size:11px;line-height:1.6;color:var(--muted);margin:12px 0}
+.lobby-qr{width:260px;margin-top:12px;margin-bottom:8px}
