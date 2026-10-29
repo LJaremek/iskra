@@ -1,0 +1,12 @@
+/storage/*
+!/storage/.gitkeep
+!/storage/.htaccess
+/public/uploads/*
+!/public/uploads/.htaccess
+!/public/uploads/.gitkeep
+/.runtime/
+/.test-data/
+__pycache__/
+
+# Archiwa mogą zawierać kopie danych lokalnych.
+/*.zip
