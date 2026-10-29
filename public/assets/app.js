@@ -36,10 +36,18 @@ function updateOptions() {
     document.querySelectorAll('[data-option]').forEach(field => {
         const hide = Number(field.dataset.option) >= count;
         field.hidden = hide; field.disabled = hide;
-        if (hide) field.querySelector('[type=radio]').checked = false;
+        if (hide) field.querySelector('.correct-label input').checked = false;
     });
-    if (!document.querySelector('[name=correct]:checked')) document.querySelector('[name=correct]').checked = true;
+    validateCorrectOptions();
 }
+function validateCorrectOptions() {
+    const choices = [...document.querySelectorAll('.correct-label input')];
+    choices.forEach(input => input.setCustomValidity(''));
+    const enabled = choices.filter(input => !input.closest('fieldset').disabled);
+    if (enabled.length && !enabled.some(input => input.checked))
+        enabled[0].setCustomValidity('Zaznacz co najmniej jedną poprawną odpowiedź.');
+}
+document.querySelectorAll('.correct-label input').forEach(input => input.addEventListener('change', validateCorrectOptions));
 countSelect?.addEventListener('change', updateOptions);
 updateOptions();
 
@@ -114,7 +122,7 @@ if (game) {
             const interactive = !host && !reveal;
             const tag = interactive ? 'button' : 'div';
             const selected = choice === i;
-            const correct = reveal && data.correct === i;
+            const correct = reveal && (data.correctChoices ?? [data.correct]).includes(i);
             const votes = reveal ? data.answerStats[i] : 0;
             const percent = data.players.length ? Math.round(votes * 100 / data.players.length) : 0;
             return '<' + tag + ' class="answer answer-color-' + i + (selected ? ' selected' : '') +
@@ -174,7 +182,7 @@ if (game) {
     }
 
     function render(data, force = false) {
-        const key = JSON.stringify([data.state, data.index, data.answered, data.correct, data.points, data.players,
+        const key = JSON.stringify([data.state, data.index, data.answered, data.correct, data.correctChoices, data.points, data.players,
             data.ranking, data.answerStats, data.unansweredCount, data.answeredCount, localChoice, pending]);
         if (key === signature && !force) return;
         signature = key;

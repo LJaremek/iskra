@@ -62,6 +62,10 @@ function run_by(string $column, string|int $value): array {
         && ($column !== 'code' || $r['state'] !== 'finished'));
     return $rows[0] ?? fail('Nie znaleziono aktywnej gry z tym kodem.',404);
 }
+// Starsze pytania i kopie rozgrywek mają tylko jedno pole correct.
+function correct_choices(array $question): array {
+    return $question['correct_choices'] ?? [$question['correct']];
+}
 function snapshot(array $run): array { return $run['snapshot']; }
 function current_question(array $run): ?array { return snapshot($run)[$run['question_index']] ?? null; }
 function next_question(array $run, float $countdownStart): array {
@@ -171,6 +175,7 @@ function game_state(string $token, bool $host): array {
             'duration'=>$question['duration'],
         ] : null,
         'correct'=>$reveal && $question ? $question['correct'] : null,
+        'correctChoices'=>$reveal && $question ? correct_choices($question) : null,
         'answered'=>$answer['choice'] ?? null,'points'=>$reveal && $answer ? $answer['points'] : null,
         'isCorrect'=>$reveal && $answer ? (bool)$answer['correct'] : null,
         'answeredCount'=>count($answers),'answerStats'=>$reveal && $question ? answer_stats($run) : null,
@@ -211,7 +216,7 @@ function submit_answer(string $token,int $index,int $choice): void {
             if ($answer['player_id'] === $me['id']) return ['Odpowiedź została już zapisana.',409];
         $elapsed = $now-$run['started_at'];
         if ($elapsed >= $question['duration']) return ['Czas na odpowiedź już minął.',409];
-        $correct = $choice === $question['correct'];
+        $correct = in_array($choice,correct_choices($question),true);
         $points = $correct ? (int)round(1000-500*min(1,$elapsed/$question['duration'])) : 0;
         store()->insert('answers',['run_id'=>$run['id'],'player_id'=>$me['id'],'question_index'=>$index,
             'choice'=>$choice,'correct'=>(int)$correct,'points'=>$points,'elapsed'=>$elapsed]);

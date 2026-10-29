@@ -32,11 +32,12 @@ class DataFile:
         return list(rows.values()) if isinstance(rows,dict) else rows
     def find(self,table,**matches):
         return next(r for r in self.rows(table) if all(r[k]==v for k,v in matches.items()))
-    def patch(self,table,row_id,**changes):
+    def patch(self,table,row_id,remove=(),**changes):
         with open(str(self.path)+'.lock','a+b') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
             data=json.loads(self.path.read_text().partition('\n')[2])
             data[table][str(row_id)].update(changes)
+            for key in remove: data[table][str(row_id)].pop(key,None)
             with tempfile.NamedTemporaryFile(mode='w',dir=self.path.parent,delete=False) as tmp:
                 tmp.write('<?php http_response_code(404); exit; __halt_compiler();\n')
                 json.dump(data,tmp,ensure_ascii=False)
@@ -58,9 +59,9 @@ class Browser:
         headers = {}
         body = None
         if data is not None:
-            data = {k: str(v) for k, v in data.items()}
+            data = {k: v if isinstance(v,list) else str(v) for k, v in data.items()}
             if csrf and self.csrf: data['_csrf'] = self.csrf
-            body = urllib.parse.urlencode(data).encode()
+            body = urllib.parse.urlencode(data,doseq=True).encode()
             headers['Content-Type'] = 'application/x-www-form-urlencoded'
         if multipart:
             fields, field, filename, payload, mime = multipart
@@ -137,6 +138,12 @@ def run_tests(base, dbfile):
     q = {'id':0,'text':'2 + 2 = ?','count':2,'correct':0,'duration':5,'option_0':'4','option_1':'5'}
     admin.call(quiz_path+'/question/save',dict(q,count=1),422)
     admin.call(quiz_path+'/question/save',dict(q,correct=2),422)
+    for invalid in [[],['2'],['-1'],['x'],['0','1','0'],{'bad':'0'}]:
+        payload=dict(q)
+        payload.pop('correct')
+        # A missing checkbox group and nested/malformed input must also be rejected.
+        payload['correct[]' if not isinstance(invalid,dict) else 'correct[bad][]']=invalid if not isinstance(invalid,dict) else ['0']
+        admin.call(quiz_path+'/question/save',payload,422)
     admin.call(quiz_path+'/question/save',q,303)
     png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jD1sAAAAASUVORK5CYII=')
     image_q = dict(q,text='',count=3,option_2='6')
@@ -148,6 +155,31 @@ def run_tests(base, dbfile):
     data = DataFile(dbfile)
     ids = [r['id'] for r in sorted(data.rows('questions'),key=lambda q:q['position'])]
     assert len(ids) == 3
+    # Reproduce the original on-disk format, without a migration.
+    data.patch('questions',ids[0],remove=('correct_choices',))
+    legacy_values=data.find('questions',id=ids[0])
+    legacy_quiz=data.find('quizzes',id=quiz_id)
+    upgraded=dict(q,id=ids[0],**{'correct[]':['0','1']})
+    upgraded.pop('correct')
+    admin.call(quiz_path+'/question/save',upgraded,303)
+    upgraded_values=data.find('questions',id=ids[0])
+    assert upgraded_values['correct_choices']==[0,1]
+    assert {k:v for k,v in upgraded_values.items() if k!='correct_choices'}==legacy_values
+    assert data.find('quizzes',id=quiz_id)==legacy_quiz
+    data.patch('questions',ids[0],remove=('correct_choices',))
+    legacy_editor=admin.call(quiz_path+'/question/'+str(ids[0]))[0]
+    assert re.search(r'type="checkbox" name="correct\[\]" value="0" checked',legacy_editor)
+    assert len(re.findall(r'name="correct\[\]"[^>]*checked',legacy_editor))==1
+    multi=dict(image_q,id=ids[1],**{'correct[]':['2','0','2']})
+    multi.pop('correct')
+    admin.call(quiz_path+'/question/save',multi,303)
+    assert data.find('questions',id=ids[1])['correct_choices']==[0,2]
+    multi_editor=admin.call(quiz_path+'/question/'+str(ids[1]))[0]
+    assert len(re.findall(r'name="correct\[\]"[^>]*checked',multi_editor))==2
+    # An invalid update must preserve the existing question.
+    before_invalid=data.find('questions',id=ids[1])
+    admin.call(quiz_path+'/question/save',dict(multi,**{'correct[]':['3']}),422)
+    assert data.find('questions',id=ids[1])==before_invalid
     admin.call(quiz_path+'/question/'+str(ids[1])+'/move',{'direction':-1},303)
     assert min(data.rows('questions'),key=lambda q:q['position'])['id'] == ids[1]
     admin.call(quiz_path+'/question/'+str(ids[1])+'/move',{'direction':1},303)
@@ -157,6 +189,13 @@ def run_tests(base, dbfile):
     token = re.search(r'data-token="([a-f0-9]+)"',host_html).group(1)
     state = admin.state(token,True)
     assert state['state']=='lobby' and state['total']==3 and re.fullmatch(r'[1-9][0-9]{2}',state['code'])
+    original_snapshot=data.find('runs',id=run_id)['snapshot']
+    assert 'correct_choices' not in original_snapshot[0]
+    # Editing the quiz must not change an already created run or history.
+    admin.call(quiz_path+'/question/save',dict(multi,**{'correct[]':['1']}),303)
+    assert data.find('runs',id=run_id)['snapshot']==original_snapshot
+    # Restore the quiz for later independent runs.
+    admin.call(quiz_path+'/question/save',multi,303)
     code = state['code']
     _,h=a.call('/ng',{'code':code,'name':'Ala <script>'},303)
     play_path=h['Location']
@@ -182,7 +221,7 @@ def run_tests(base, dbfile):
     countdown=a.state(token)
     assert countdown['state']=='countdown' and countdown['index']==0
     assert 0<countdown['deadline']-countdown['serverTime']<=5
-    assert countdown['question'] is None and countdown['correct'] is None
+    assert countdown['question'] is None and countdown['correct'] is None and countdown['correctChoices'] is None
     assert countdown['answerStats'] is None and 'ranking' not in countdown
     answer(a,0,0,409)
     assert len(data.rows('answers'))==0
@@ -190,7 +229,7 @@ def run_tests(base, dbfile):
     set_start(time.time()-.1)
     state=a.state(token)
     assert state['state']=='question' and state['correct'] is None and 'ranking' not in state
-    assert state['answerStats'] is None
+    assert state['answerStats'] is None and state['correctChoices'] is None
     answer(a,0,0)
     hidden=a.state(token)
     assert hidden['answered']==0 and hidden['points'] is None and hidden['isCorrect'] is None
@@ -200,7 +239,7 @@ def run_tests(base, dbfile):
     set_start(time.time()-5-.1)
     answer(b,0,0,409)
     state=a.state(token)
-    assert state['state']=='results' and state['correct']==0 and state['points']>=500
+    assert state['state']=='results' and state['correct']==0 and state['correctChoices']==[0] and state['points']>=500
     assert state['ranking'][0]['name']=='Ala <script>' and state['ranking'][1]['score']==0
     first_points=state['points']
     assert state['ranking'][0]['roundPoints']==first_points
@@ -228,15 +267,19 @@ def run_tests(base, dbfile):
     assert len(state['question']['options'])==3 and state['question']['image']
     assert state['question']['image'].startswith(a.prefix+'/uploads/')
     assert a.call(state['question']['image'])[1].get('Content-Type')=='image/png'
-    # Real separate browser sessions race to write SQLite, then duplicate submissions.
+    # Different correct options both earn full speed-based points; one immutable choice per player.
     with concurrent.futures.ThreadPoolExecutor(2) as pool:
-        futures=[pool.submit(answer, browser, 1, 0) for browser in (a,b)]
+        futures=[pool.submit(answer, browser, 1, choice) for browser,choice in ((a,0),(b,2))]
         for future in futures: future.result()
     answer(a,1,0,409)
     set_start(time.time()-5-.1)
     round_two=a.state(token)
-    assert round_two['state']=='results'
-    assert round_two['answerStats']==[2,0,0] and round_two['unansweredCount']==0
+    assert round_two['state']=='results' and round_two['correctChoices']==[0,2]
+    assert round_two['isCorrect'] is True and round_two['points']>=500
+    assert b.state(token)['isCorrect'] is True and b.state(token)['points']>=500
+    multi_report=admin.call('/admin/run/'+str(run_id))[0]
+    assert multi_report.count('class="report-option is-correct"')==4
+    assert round_two['answerStats']==[1,0,1] and round_two['unansweredCount']==0
     ala=next(row for row in round_two['ranking'] if row['name']=='Ala <script>')
     bartek=next(row for row in round_two['ranking'] if row['name']=='Bartek')
     assert ala['score']==first_points+ala['roundPoints']
@@ -352,6 +395,7 @@ def run_tests(base, dbfile):
     print('      concurrent writes, scoring/ranking, snapshots/history, expiry, data isolation,')
     print('      10s default, hidden 5s countdown, 15s auto-advance + admin skip, per-round points, vote stats,')
     print('      stale host requests and automatic catch-up after missed phases.')
+    print('      multiple correct options, checkbox validation, legacy quiz/run compatibility, immutable snapshots.')
 
 def main():
     php=os.environ.get('PHP_BIN','php')

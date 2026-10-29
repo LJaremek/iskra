@@ -123,7 +123,7 @@ try {
                 if ($old && $old['quiz_id'] !== $quizId) $old=null;
                 if ($qid && !$old) fail('Nie znaleziono pytania.',404);
                 $oldOptions=$old['options'] ?? [];
-                $count=integer('count',2,4); $correct=integer('correct',0,$count-1); $duration=integer('duration',5,180);
+                $count=integer('count',2,4); $correct=correct_input($count); $duration=integer('duration',5,180);
                 $text=input('text',500,false);
                 $image=upload('image',isset($_POST['remove_image']) ? null : ($old['image'] ?? null));
                 if ($text==='' && !$image) fail('Dodaj treść pytania lub zdjęcie.');
@@ -134,7 +134,7 @@ try {
                     if ($optionText==='' && !$optionImage) fail('Każda odpowiedź musi zawierać tekst lub zdjęcie.');
                     $options[]=['text'=>$optionText,'image'=>$optionImage];
                 }
-                $values=['text'=>$text,'image'=>$image,'duration'=>$duration,'options'=>$options,'correct'=>$correct];
+                $values=['text'=>$text,'image'=>$image,'duration'=>$duration,'options'=>$options,'correct'=>$correct[0],'correct_choices'=>$correct];
                 transaction(function () use ($old,$qid,$quizId,$values) {
                     if ($old) store()->update('questions',$qid,$values);
                     else {
@@ -192,4 +192,21 @@ function integer(string $key,int $min,int $max): int {
     $value=filter_var($raw,FILTER_VALIDATE_INT);
     if ($value===false || $value<$min || $value>$max) fail('Wartość musi być pomiędzy '.$min.' a '.$max.'.');
     return $value;
+}
+
+function correct_input(int $count): array {
+    $raw = $_POST['correct'] ?? [];
+    // Przyjmujemy też stary formularz otwarty przed aktualizacją.
+    if (is_string($raw)) $raw = [$raw];
+    if (!is_array($raw) || !$raw || count($raw)>$count)
+        fail('Zaznacz co najmniej jedną poprawną odpowiedź.');
+    $choices = [];
+    foreach ($raw as $value) {
+        if (!is_string($value) || !preg_match('/^[0-3]$/D',$value) || (int)$value >= $count)
+            fail('Zaznacz poprawne odpowiedzi spośród dostępnych opcji.');
+        $choices[] = (int)$value;
+    }
+    $choices = array_values(array_unique($choices));
+    sort($choices);
+    return $choices;
 }

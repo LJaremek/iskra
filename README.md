@@ -18,7 +18,7 @@ Wbudowany serwer PHP służy do testów lokalnych. Na serwerze docelowym użyj u
 
 1. Wejdź na /public/ w adresie hostingu lub na http://localhost:8080/ w teście lokalnym.
 2. Kliknij „Panel prowadzącego” i załóż pierwsze konto administratora (hasło minimum 12 znaków, maksimum 72 bajty). Zrób to przed udostępnieniem strony innym.
-3. Utwórz quiz, dodaj pytania z 2–4 odpowiedziami i zaznacz jedną poprawną.
+3. Utwórz quiz, dodaj pytania z 2–4 odpowiedziami i zaznacz jedną lub kilka poprawnych.
 4. Uruchom rozgrywkę. Gracze podają kod i nazwę, bez zakładania kont.
 5. Prowadzący uruchamia grę; kolejne rundy przechodzą automatycznie.
 
@@ -40,9 +40,10 @@ Jeżeli na własnym serwerze masz poprawnie skonfigurowane reguły rewrite, moż
 - Przed każdym pytaniem trwa 5 sekund odliczania. Treść i odpowiedzi są wtedy ukryte także w API.
 - Wyniki pytania są widoczne przez 15 sekund. Potem automatycznie rusza kolejna runda albo ranking końcowy.
 - Admin może skrócić oczekiwanie przyciskiem „Następne pytanie” lub „Pokaż podium teraz”.
-- Wyniki pokazują głosy na każdą odpowiedź, poprawną opcję i liczbę osób bez odpowiedzi.
+- Wyniki pokazują głosy na każdą odpowiedź, wszystkie poprawne opcje i liczbę osób bez odpowiedzi.
 - Ranking pokazuje przyrost i sumę, np. +873 (2421). Finał to podium top 3 i tabela wszystkich graczy.
 - Poprawna odpowiedź daje round(1000 - 500 × czas_odpowiedzi / limit_czasu) punktów. Błędna odpowiedź lub brak odpowiedzi daje 0.
+- Admin oznacza jedną lub kilka poprawnych opcji. Gracz wybiera jedną — dowolna poprawna opcja daje punkty według tego samego wzoru, bez dzielenia punktów.
 - Jednej odpowiedzi nie można zmienić. Czas i poprawność rozstrzyga serwer.
 - Remisy rozstrzygają: więcej poprawnych odpowiedzi, krótszy łączny czas, kolejność dołączenia.
 - Gracze dołączają w poczekalni. Odświeżenie zachowuje gracza w tej samej przeglądarce.

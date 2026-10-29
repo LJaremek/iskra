@@ -57,7 +57,17 @@ W katalogu repozytorium:
     git pull --ff-only
     sh scripts/permissions.sh
 
-Nie kasuj storage/ ani public/uploads/. Odśwież przeglądarki po aktualizacji JS.
+Quizy, pytania, konto i historia są w ignorowanym przez Git pliku
+storage/quiz.json.php; zdjęcia w ignorowanym public/uploads/. Zwykły git pull
+nie nadpisuje tych danych. Nie używaj git clean -fdx i nie kasuj tych katalogów.
+Nie kopiuj przykładowego pliku danych na istniejącą instalację.
+
+Obsługa kilku poprawnych opcji nie wymaga migracji ani ponownego tworzenia quizu.
+Stare pytania i historia nadal działają; dotychczasowa poprawna opcja pozostaje
+zaznaczona w edytorze. Po pull można zaznaczyć kolejne i zapisać pytanie.
+Edycja dotyczy kolejnych uruchomień — już utworzona rozgrywka ma własną kopię pytań.
+
+Aktualizuj między rozgrywkami i odśwież panel oraz przeglądarki graczy po zmianie JS.
 Nie zapisuj własnych zmian kodu na serwerze, jeśli kod jest zarządzany przez Git.
 
 ## Testy
