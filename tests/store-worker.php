@@ -11,6 +11,8 @@ if (($argv[2] ?? '') === 'rollback') {
     } catch (RuntimeException $error) {
         if ($error->getMessage() !== 'expected rollback') throw $error;
     }
+} elseif (($argv[2] ?? '') === 'read') {
+    $store->all('quizzes');
 } else {
     for ($i=0;$i<40;$i++) $store->insert('quizzes',['title'=>'Worker '.getmypid().':'.$i,'description'=>'','created_at'=>time()]);
 }

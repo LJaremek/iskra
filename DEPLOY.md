@@ -26,8 +26,25 @@ Skrypt nadaje 705 kodowi i katalogom. Prywatne dane i blokady mają 600,
 a publiczne zdjęcia 644. Git nie przechowuje dokładnego trybu 705 — po pull
 trzeba uruchomić skrypt na serwerze.
 
-storage/ i public/uploads/ muszą należeć do użytkownika procesu PHP.
-Przy trybie 705 tylko właściciel może w nich zapisywać.
+W domyślnym trybie storage/ i public/uploads/ muszą należeć do użytkownika
+procesu PHP. Przy trybie 705 tylko właściciel może w nich zapisywać.
+
+Gdy dane tworzy www-data i deweloperzy potrzebują SSH/SFTP do plików, administrator
+hostingu musi przygotować wspólną prywatną grupę obejmującą PHP i deweloperów.
+Nie trzeba umożliwiać logowania jako www-data. Właściciel storage/ lub administrator
+następnie uruchamia:
+    sh scripts/permissions.sh --shared-data WSPOLNA_GRUPA
+
+To ustawia storage/ na 2770, pliki danych i blokad na 660. Setgid utrzymuje grupę
+nowych plików; aplikacja zachowuje dostęp po kolejnych zapisach i atomowej podmianie.
+Właściciel kodu nie musi być właścicielem danych: pliki należące do PHP aplikacja
+dostosuje podczas następnego żądania, o ile PHP należy do wskazanej grupy i może
+wywołać chgrp. W przeciwnym razie administrator musi ustawić grupę istniejących
+plików przed aktywacją. Deweloperzy muszą mieć przejście przez katalogi nadrzędne.
+
+Skrypt bez flagi zachowuje raz włączony tryb współdzielony. Nie zmienia zawartości.
+Sam pull nie zmienia właściciela plików ani członkostwa w grupach. Szczegóły
+i ograniczenia konfiguracji uprawnień opisano w README.md.
 
 ## Konfiguracja PHP i HTTP
 

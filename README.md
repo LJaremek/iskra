@@ -84,7 +84,40 @@ sh scripts/permissions.sh
 
 Skrypt nadaje 705 kodowi i katalogom, 600 prywatnym danym oraz 644 publicznym zdjęciom. Pomija .git i lokalne środowiska. Git zapisuje tylko bit wykonywalności, a nie pełny tryb 705, dlatego skrypt trzeba wykonać na serwerze.
 
-Przy trybie 705 katalog storage/ musi należeć do użytkownika, jako który działa PHP — tylko właściciel ma prawo zapisu. Nie ustawiaj praw 777.
+Przy trybie prywatnym 705 katalog storage/ musi należeć do użytkownika, jako który działa PHP — tylko właściciel ma prawo zapisu.
+
+### Wspólny dostęp deweloperów do danych
+
+Jeżeli pliki tworzy www-data, nie trzeba logować się na to konto. PHP i wskazani
+deweloperzy muszą należeć do jednej, przeznaczonej dla projektu grupy systemowej.
+Jej utworzenie i dodanie użytkowników wymaga pomocy administratora hostingu.
+Po dodaniu do grupy deweloperzy powinni ponownie zalogować się do SSH/SFTP.
+
+Właściciel storage/ (lub administrator hostingu) włącza dostęp poleceniem:
+
+    sh scripts/permissions.sh --shared-data WSPOLNA_GRUPA
+
+WSPOLNA_GRUPA to istniejąca, prywatna grupa projektu obejmująca użytkownika PHP
+i uprawnionych deweloperów. Nie wybieraj ogólnej grupy wszystkich użytkowników
+hostingu. Katalog storage/ otrzymuje 2770: zapis dla właściciela i grupy oraz
+dziedziczenie grupy przez nowe pliki. Dane i blokada otrzymują 660.
+Pozostali użytkownicy nie dostają dostępu do danych.
+
+Pliki należące do www-data, których deweloper nie może zmienić przez chmod,
+otrzymają właściwą grupę i prawa przy następnym żądaniu aplikacji jako www-data.
+PHP musi być członkiem wybranej grupy. Jeśli PHP ma zablokowane chgrp, grupę
+istniejących plików musi wcześniej ustawić administrator hostingu.
+Jeżeli również storage/ należy do www-data, samo włączenie trybu wymaga
+administratora hostingu — git pull nie zmienia właściciela ani grup systemowych.
+
+Aplikacja utrzymuje 660 i wspólną grupę również po atomowej podmianie pliku.
+Kolejne zwykłe wywołania scripts/permissions.sh zachowują ten tryb.
+Deweloperzy potrzebują też prawa przejścia przez katalogi nadrzędne.
+
+Zawartość quizów, historia, konto i osłona PHP pozostają bez zmian.
+Nie edytuj ręcznie pliku podczas gry: kopie i edycje wykonuj pod blokadą
+quiz.json.php.lock. Plik zawiera również konto administratora i historię.
+Nie ustawiaj praw 666 ani 777.
 
 Zdjęcia są w public/uploads/. Są publicznymi zasobami. Pozostają na dysku po usunięciu pytania, bo może używać ich historia.
 

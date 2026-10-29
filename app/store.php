@@ -8,6 +8,7 @@ final class JsonStore {
     private ?array $data = null;
     private bool $writing = false;
     private bool $dirty = false;
+    private bool $shared = false;
 
     public function __construct(private string $file) {
         $folder = dirname($file);
@@ -15,6 +16,22 @@ final class JsonStore {
             || (is_file($file) && !is_writable($file))) {
             fail('PHP nie może zapisywać danych. Nadaj użytkownikowi PHP prawo zapisu do katalogu storage/ i jego plików.', 500);
         }
+        // Setgid + zapis grupowy na katalogu włącza trwały dostęp zespołu.
+        $this->shared = (fileperms($folder) & 02020) === 02020;
+    }
+
+    private function permissions(string $path): void {
+        clearstatcache(true,$path);
+        $mode = $this->shared ? 0660 : 0600;
+        if ($this->shared) {
+            $group = filegroup(dirname($this->file));
+            if (filegroup($path) !== $group && !@chgrp($path,$group))
+                throw new RuntimeException('Nie można ustawić wspólnej grupy danych. PHP i deweloperzy muszą należeć do grupy katalogu storage/.');
+        }
+        clearstatcache(true,$path);
+        // Inny członek grupy nie musi być właścicielem poprawnie ustawionego pliku.
+        if ((fileperms($path) & 0777) !== $mode && !@chmod($path,$mode))
+            throw new RuntimeException('Nie można ustawić uprawnień danych. Uruchom skrypt permissions jako właściciel plików lub poproś administratora hostingu.');
     }
 
     private function lock(int $mode) {
@@ -23,8 +40,15 @@ final class JsonStore {
             if ($handle) fclose($handle);
             throw new RuntimeException('Nie można zablokować pliku danych.');
         }
-        @chmod($this->file . '.lock', 0600);
-        return $handle;
+        try {
+            $this->permissions($this->file . '.lock');
+            if ($this->shared && is_file($this->file)) $this->permissions($this->file);
+            return $handle;
+        } catch (Throwable $error) {
+            flock($handle,LOCK_UN);
+            fclose($handle);
+            throw $error;
+        }
     }
 
     private function load(): array {
@@ -58,8 +82,8 @@ final class JsonStore {
         try {
             $handle = fopen($temporary, 'xb');
             if (!$handle) throw new RuntimeException('Nie można zapisać danych.');
-            chmod($temporary, 0600);
             try {
+                $this->permissions($temporary);
                 $offset = 0;
                 while ($offset < strlen($encoded)) {
                     $written = fwrite($handle, substr($encoded, $offset));
