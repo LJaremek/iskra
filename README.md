@@ -155,6 +155,13 @@ python3 tests/smoke.py
 python3 tests/store_integrity.py
 ```
 
+Opcjonalny test klienta (Node.js tylko na komputerze dewelopera, bez instalowania pakietów):
+
+    node tests/client_render.cjs
+
+Sprawdza zachowanie przycisków podczas napływania cudzych głosów, aktualizację
+licznika, własny wybór i przejścia między pytaniem, wynikami oraz podium.
+
 Python jest wymagany tylko do testów i opcjonalnej migracji. Zmienna PHP_BIN może wskazywać interpreter, a PHP_ARGS jego dodatkowe argumenty. Testy HTTP sprawdzają root i podfolder, z rewrite i bez niego. Test integralności sprawdza równoczesny zapis, atomowy odczyt, cofnięcie transakcji i ochronę uszkodzonego pliku. Testy nie zmieniają danych aplikacji.
 
 ## Aktualizacje

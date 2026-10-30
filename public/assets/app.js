@@ -208,8 +208,17 @@ if (game) {
 
     function render(data, force = false) {
         const key = JSON.stringify([data.state, data.index, data.answered, data.correct, data.correctChoices, data.points, data.players,
-            data.ranking, data.answerStats, data.unansweredCount, data.answeredCount, localChoice, pending]);
-        if (key === signature && !force) return;
+            data.ranking, data.answerStats, data.unansweredCount,
+            data.state === 'question' ? null : data.answeredCount, localChoice, pending]);
+        // Cudzy głos aktualizuje licznik, nie wymienia przycisków i ich stanu hover/fokusu.
+        if (key === signature && !force) {
+            if (data.state === 'question') {
+                const counter = game.querySelector('.game-counter');
+                const text = 'Odpowiedzi: ' + data.answeredCount + ' / ' + data.players.length;
+                if (counter && counter.textContent !== text) counter.textContent = text;
+            }
+            return;
+        }
         signature = key;
         let content;
         if (data.state === 'lobby') content = lobby(data);
